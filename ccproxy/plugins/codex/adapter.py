@@ -270,14 +270,11 @@ class CodexAdapter(BaseHTTPAdapter):
         # Inject instructions mandatory for being allow to
         # to used the Codex API endpoint
         # Fetch detected instructions from detection service
-        instructions = self._get_instructions()
+        instructions = self._get_instructions() or ""
 
         existing_instructions = body_data.get("instructions")
-        if isinstance(existing_instructions, str) and existing_instructions:
-            if instructions:
-                instructions = instructions + "\n" + existing_instructions
-            else:
-                instructions = existing_instructions
+        if isinstance(existing_instructions, str) and existing_instructions.strip():
+            instructions = existing_instructions
 
         body_data["instructions"] = instructions
 
