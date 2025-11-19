@@ -117,9 +117,8 @@ class CodexCacheData(BaseModel):
     body_json: Annotated[
         dict[str, Any] | None,
         Field(
-            description="Legacy captured request body (deprecated)",
+            description="Captured request body template including Codex CLI metadata",
             default=None,
-            exclude=True,
         ),
     ] = None
     method: Annotated[

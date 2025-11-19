@@ -266,17 +266,34 @@ class CodexAdapter(BaseHTTPAdapter):
 
         # Parse body (format conversion is now handled by format chain)
         body_data = json.loads(body.decode()) if body else {}
+        logger.debug(
+            "codex_request_received",
+            has_instructions="instructions" in body_data,
+            instructions_length=len(body_data.get("instructions", "")),
+        )
 
         # Inject instructions mandatory for being allow to
         # to used the Codex API endpoint
         # Fetch detected instructions from detection service
-        instructions = self._get_instructions() or ""
-
-        existing_instructions = body_data.get("instructions")
-        if isinstance(existing_instructions, str) and existing_instructions.strip():
-            instructions = existing_instructions
-
+        instructions = body_data.get("instructions")
+        if not (isinstance(instructions, str) and instructions.strip()):
+            instructions = self._get_instructions() or ""
+        else:
+            instructions = instructions.strip()
         body_data["instructions"] = instructions
+
+        template_defaults = self._get_template_defaults()
+        for key, value in template_defaults.items():
+            body_data.setdefault(key, value)
+
+        if template_defaults:
+            logger.debug(
+                "codex_template_applied",
+                include=body_data.get("include"),
+                prompt_cache_key=body_data.get("prompt_cache_key"),
+                has_reasoning="reasoning" in body_data,
+                tool_choice=body_data.get("tool_choice"),
+            )
 
         # Codex backend requires stream=true, always override
         body_data["stream"] = True
@@ -319,6 +336,34 @@ class CodexAdapter(BaseHTTPAdapter):
             filtered_headers.update(cli_headers)
 
         return json.dumps(body_data).encode(), filtered_headers
+
+    def _get_template_defaults(self) -> dict[str, Any]:
+        """Return template fields captured from Codex CLI detection."""
+
+        if not self.detection_service:
+            return {}
+
+        get_template = getattr(self.detection_service, "get_request_template", None)
+        if not callable(get_template):
+            return {}
+
+        template = get_template() or {}
+        allowed_keys = {
+            "include",
+            "prompt_cache_key",
+            "parallel_tool_calls",
+            "reasoning",
+            "tool_choice",
+            "tools",
+        }
+
+        defaults: dict[str, Any] = {}
+        for key in allowed_keys:
+            value = template.get(key)
+            if value is not None:
+                defaults[key] = value
+
+        return defaults
 
     async def process_provider_response(
         self, response: httpx.Response, endpoint: str

@@ -112,6 +112,90 @@ curl -X POST http://localhost:8000/openai/v1/chat/completions \
 
 You should now see the request to `api.anthropic.com` in the mitmproxy web interface.
 
+## Capturing Codex SSE Model Metadata
+
+When you need to verify the exact Codex model returned by OpenAI, run CCProxy
+through mitmproxy and use the helper script `scripts/mitm_codex_sse_logger.py`
+to automatically print the model name contained in each SSE event. This is
+especially useful when double-checking that the Codex CLI or `ccproxy` is
+actually receiving `gpt-5.1-codex` (high) from the upstream Response API.
+
+```bash
+# Terminal 1: run mitmproxy with the SSE logger
+pip install --upgrade mitmproxy
+mitmdump --listen-port 8888 -s scripts/mitm_codex_sse_logger.py
+
+# Terminal 2: route CCProxy through the proxy
+export HTTPS_PROXY=http://localhost:8888
+export REQUESTS_CA_BUNDLE=~/.mitmproxy/mitmproxy-ca-cert.pem
+
+# Start CCProxy normally (Taskfile/devserver/uvx all work)
+./Taskfile dev
+
+# Terminal 3: trigger a streaming Codex request
+curl -N http://localhost:8000/codex/responses \
+  -H "Content-Type: application/json" \
+  -d '{
+        "model": "gpt-5.1-codex",
+        "messages": [{"role": "user", "content": "Say hello"}],
+        "stream": true
+      }'
+```
+
+`mitmdump` prints log lines similar to:
+
+```
+127.0.0.1:53624: clientconnect
+<< codex_sse_model event_type=response.created model=gpt-5.1-codex url=https://chatgpt.com/backend-api/codex/v1/responses
+```
+
+Each SSE event carries the same `model` field, so you can watch the log to
+confirm what the upstream actually returned. Because the CCProxy HTTP client
+respects the standard `HTTPS_PROXY`, `ALL_PROXY`, and `REQUESTS_CA_BUNDLE`
+variables, the same approach also works when running the Codex CLI itself (set
+the environment variables before invoking `codex exec ...`).
+
+### Proxying a Codex CLI Run
+
+You can capture a *real* `codex exec` run by pointing the CLI at CCProxy (via a
+profile in `~/.codex/config.toml`) and routing the CCProxy process through
+mitmproxy. The CLI stays non-interactive, so it works inside the Codex CLI headless
+environment.
+
+```toml
+# ~/.codex/config.toml
+[profiles.ccproxy]
+model_provider = "ccproxy"
+[model_providers.ccproxy]
+name = "CCProxy"
+base_url = "http://127.0.0.1:8000/codex"
+wire_api = "responses"
+model = "gpt-5.1-codex"
+model_reasoning_effort = "high"
+model_reasoning_summary = "detailed"
+```
+
+With that profile in place, run the following three terminals:
+
+```bash
+# Terminal 1: mitmproxy + SSE logger
+mitmdump --listen-port 8888 -s scripts/mitm_codex_sse_logger.py
+
+# Terminal 2: start CCProxy with proxy + CA configuration
+export HTTPS_PROXY=http://127.0.0.1:8888
+export REQUESTS_CA_BUNDLE=~/.mitmproxy/mitmproxy-ca-cert.pem
+./Taskfile dev  # or whichever command you use to run ccproxy
+
+# Terminal 3: trigger a Codex CLI request routed through CCProxy
+codex exec --profile ccproxy --model gpt-5.1-codex --sandbox danger-full-access \
+  --ask-for-approval=never "Write a short diagnostic reply"
+```
+
+The command in Terminal 3 forces the CLI to hit the local CCProxy instance,
+which then talks to ChatGPT via mitmproxy. You will see the resulting SSE traffic
+and `model` names logged by the addon, confirming which upstream model fulfilled
+the CLI request.
+
 ## Testing Proxy Configuration
 
 Use the provided debug script to test your proxy setup:

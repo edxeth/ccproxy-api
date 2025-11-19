@@ -145,6 +145,14 @@ class CodexDetectionService:
             return DetectedPrompts()
         return data.prompts
 
+    def get_request_template(self) -> dict[str, Any]:
+        """Return the most recent Codex CLI request payload template."""
+
+        data = self.get_cached_data()
+        if not data or not data.body_json:
+            return {}
+        return cast(dict[str, Any], json.loads(json.dumps(data.body_json)))
+
     def get_ignored_headers(self) -> list[str]:
         """Headers that should be ignored when forwarding CLI values."""
 
